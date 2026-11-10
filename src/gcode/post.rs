@@ -58,7 +58,7 @@ pub struct DefaultPost {
 /// `PostProcessor.version`/`GCodePost.version` of the Python post this one
 /// follows.
 pub const VERSION: &str = "2";
-pub const CARVERA_VERSION: &str = "carvera-nominal-1";
+pub const CARVERA_VERSION: &str = "carvera-nominal-2";
 pub const HAAS_VERSION: &str = "haas-ngc-2020-2";
 
 fn invalid_block(line: &str) -> bool {
@@ -149,6 +149,18 @@ impl DefaultPost {
             .copied()
             .collect::<Vec<_>>()
             .join(" ");
+        if matches!(self.machine.controller, Some(Controller::Carvera(_))) {
+            if ["G17", "G18", "G19"].contains(&line.as_str())
+                && self.modal("carvera_plane", &line).is_none()
+            {
+                return Ok(());
+            }
+            // Switch.cpp changes air immediately; Carvera.cps drains queued
+            // motion before both on and off. Keep every air hook synchronized.
+            if line == "M7" || line == "M9" {
+                self.emit(&["M400"])?;
+            }
+        }
         if self.lines.len() >= self.limit || line.len() > 1024 || invalid_block(&line) {
             return Err("post hook output exceeds block/ASCII/1024byte limit".into());
         }

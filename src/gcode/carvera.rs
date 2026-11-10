@@ -42,8 +42,14 @@ impl Carvera {
             m.planes == [Plane::Xy, Plane::Xz, Plane::Yz]
                 && m.arcs
                 && m.helices
-                && m.max_sweep_rad <= std::f64::consts::TAU,
-            "Carvera requires single-turn native XYZ-plane arcs and helices",
+                && m.max_sweep_rad <= std::f64::consts::PI,
+            "Carvera requires native XYZ-plane arcs and helices of at most 180 degrees",
+        )?;
+        // Makera Carvera.cps: maximumCircularSweep=toRad(180); error6
+        // refuses automatic tool slots beyond six (manual changes are separate).
+        require(
+            m.max_tool_number <= 6 && m.max_length_register <= 6,
+            "Carvera reference tool and length slots must be 1..6",
         )?;
         let d = &m.dialect;
         let expected = [

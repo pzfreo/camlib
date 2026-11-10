@@ -17,7 +17,7 @@ mod probe;
 
 /// The version string of the Python decoder this one follows.
 pub const VERSION: &str = "configured_motion_native_v1";
-pub const CARVERA_VERSION: &str = "carvera-nominal-1";
+pub const CARVERA_VERSION: &str = "carvera-nominal-2";
 pub const HAAS_VERSION: &str = "haas-ngc-2020-nominal-1";
 
 pub fn plane_name(p: Plane) -> &'static str {
@@ -143,6 +143,7 @@ fn unused(values: &[(char, f64)], used: &BTreeSet<char>) -> Result<(), String> {
 pub struct Decoder {
     haas: haas::HaasState,
     carvera_retracted: bool,
+    carvera_air_sync_pending: bool,
     machine: Machine,
     pub position: Vec3,
     pub units: Option<f64>,
@@ -240,6 +241,7 @@ impl Decoder {
             ended: false,
             haas: haas::HaasState::default(),
             carvera_retracted: false,
+            carvera_air_sync_pending: false,
             direction: SpindleDirection::Cw,
             tap_return: None,
             cycle_active: false,
@@ -268,6 +270,9 @@ impl Decoder {
             .collect();
         if missing.is_empty() {
             match &self.machine.controller {
+                Some(Controller::Carvera(_)) if self.carvera_air_sync_pending => {
+                    Err("Carvera M400 must immediately precede M7 or M9".into())
+                }
                 None | Some(Controller::Carvera(_)) => Ok(()),
                 Some(Controller::HaasNGC(h)) => self.haas_initialized(h),
             }

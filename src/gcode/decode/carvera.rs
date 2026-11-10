@@ -21,6 +21,20 @@ impl Decoder {
         }
         let normalized = line.split(';').next().unwrap().trim().to_ascii_uppercase();
         let line = normalized.as_str();
+        if self.carvera_air_sync_pending {
+            if line != "M7" && line != "M9" {
+                return Err("Carvera M400 must immediately precede M7 or M9".into());
+            }
+            self.carvera_air_sync_pending = false;
+            return self.read_base(line, context);
+        }
+        if line == "M7" || line == "M9" {
+            return Err("Carvera air change requires immediately preceding M400".into());
+        }
+        if line == "M400" {
+            self.carvera_air_sync_pending = true;
+            return Ok(vec![]);
+        }
         if line == "G53 G0 Z-3" {
             self.validate_initialized()?;
             let length = self
@@ -28,7 +42,9 @@ impl Decoder {
                 .as_ref()
                 .map_or(c.initial_gauge_length_mm, |t| t.gauge_length_mm);
             let z = self.position[2] + self.machine.work_to_machine.origin_mm[2] + length;
-            if z != -3. {
+            // Half one output unit; both ports divide by the exact integer
+            // power of ten, avoiding platform-dependent pow implementations.
+            if (z + 3.).abs() > 0.5 / (10_u64.pow(self.machine.decimals) as f64) {
                 return Err("Carvera G53 retract requires planned gauge-line machine Z=-3; plan the retract".into());
             }
             self.carvera_retracted = true;
@@ -77,10 +93,10 @@ impl Decoder {
                     rest[..count]
                         .parse::<f64>()
                         .ok()
-                        .is_some_and(|v| v == 6. || v == 30.)
+                        .is_some_and(|v| [6., 7., 9., 30., 400.].contains(&v))
                 })
             {
-                return Err("Carvera requires T<n> M6 with automatic length, no H words".into());
+                return Err("Carvera requires T<n> M6 without H; air requires standalone M400 immediately before M7 or M9".into());
             }
         }
         let events = self.read_base(line, context)?;

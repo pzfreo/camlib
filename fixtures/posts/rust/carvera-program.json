@@ -98,8 +98,8 @@
               12
             ],
             "end": [
-              5,
-              5,
+              0,
+              10,
               11
             ],
             "center": [
@@ -107,7 +107,7 @@
               5,
               12
             ],
-            "sweep_rad": 6.283185307179586,
+            "sweep_rad": 1.5707963267948966,
             "plane": "xy"
           },
           "feed_mm_min": 300,
@@ -123,8 +123,8 @@
           "curve": {
             "kind": "line",
             "start": [
-              5,
-              5,
+              0,
+              10,
               11
             ],
             "end": [
@@ -342,7 +342,7 @@
     ],
     "arcs": true,
     "helices": true,
-    "max_sweep_rad": 6.283185307179586,
+    "max_sweep_rad": 3.141592653589793,
     "max_tool_number": 6,
     "max_length_register": 6,
     "tool_changes": true,

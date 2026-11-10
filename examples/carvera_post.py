@@ -68,8 +68,12 @@ class ReferenceMachine(Machine):
             raise ValueError('Carvera work offsets require Cartesian translation only')
         if self.tool_change_position_mode != 'table' or self.flood:
             raise ValueError('Carvera requires declared table poses after M6 and no flood coolant')
-        if self.planes != ('xy', 'xz', 'yz') or not self.arcs or not self.helices or self.max_sweep_rad > math.tau:
-            raise ValueError('Carvera requires single-turn native XYZ-plane arcs and helices')
+        if self.planes != ('xy', 'xz', 'yz') or not self.arcs or not self.helices or self.max_sweep_rad > math.pi:
+            raise ValueError('Carvera requires native XYZ-plane arcs and helices of at most 180 degrees')
+
+        # Carvera.cps error6: stock ATC has six slots; no manual-change path.
+        if self.max_tool_number > 6 or self.max_length_register > 6:
+            raise ValueError('Carvera reference tool and length slots must be 1..6')
 
     def to_dict(self):
         result = super().to_dict()
@@ -91,7 +95,7 @@ def define_machine(name, tools, *, initial_gauge_length_mm, unmodified_coordinat
         planes=('xy', 'xz', 'yz'),
         arcs=True,
         helices=True,
-        max_sweep_rad=math.tau,
+        max_sweep_rad=math.pi,
         initial_gauge_length_mm=initial_gauge_length_mm,
         unmodified_coordinates=unmodified_coordinates,
         automatic_tool_length=automatic_tool_length,
@@ -101,7 +105,18 @@ def define_machine(name, tools, *, initial_gauge_length_mm, unmodified_coordinat
 
 class CarveraPost(GCodePost):
     controller_name = 'carvera'
-    version = 'carvera-nominal-1'
+    version = 'carvera-nominal-2'
+
+    def emit(self, *words):
+        if len(words) == 1:
+            code = words[0]
+            if code in ('G17', 'G18', 'G19') and self.modal('carvera_plane', code) is None:
+                return
+            # Switch.cpp toggles outputs at parse time. Makera's coolant
+            # sequences explicitly drain the planner before M7 and M9.
+            if code in ('M7', 'M9'):
+                super().emit('M400')
+        super().emit(*words)
 
     def on_begin(self, program):
         self.geometry_tolerance_mm = program.tolerance_mm
@@ -130,12 +145,18 @@ class CarveraDecoder(NativeGCodeDecoder):
     """Independent actual-word reader. No formatter helpers or source geometry."""
 
     controller_name = 'carvera'
-    version = 'carvera-nominal-1'
+    version = 'carvera-nominal-2'
 
     def __init__(self, machine, program):
         super().__init__(machine, program)
         self.ready.add('length')  # M6 measures/applies TLO; no G49 initialization.
         self.retracted = False
+        self.air_sync_pending = False
+
+    def validate_initialized(self):
+        super().validate_initialized()
+        if self.air_sync_pending:
+            raise ValueError('Carvera M400 must immediately precede M7 or M9')
 
     def read_line(self, line, context=None):
         if self.ended:
@@ -143,13 +164,25 @@ class CarveraDecoder(NativeGCodeDecoder):
         if len(line) > 1024 or not line.isascii() or any(ord(ch) < 32 and ch != '\t' or ord(ch) == 127 for ch in line):
             raise ValueError('invalid Carvera physical block')
         line = line.partition(';')[0].strip().upper()
+        if self.air_sync_pending:
+            if line not in ('M7', 'M9'):
+                raise ValueError('Carvera M400 must immediately precede M7 or M9')
+            self.air_sync_pending = False
+            return super().read_line(line, context)
+        if line in ('M7', 'M9'):
+            raise ValueError('Carvera air change requires immediately preceding M400')
+        if line == 'M400':
+            self.air_sync_pending = True
+            return []
         # G53 must explicitly select G0: firmware docs say the following G0/G1
         # uses MCS. Do not depend on the preceding modal motion command.
         if line == 'G53 G0 Z-3':
             self.validate_initialized()
             length = self.active.gauge_length_mm if self.active else self.machine.initial_gauge_length_mm
             z = self.position[2] + self.machine.work_to_machine.origin_mm[2] + length
-            if z != -3:
+            # Compare the posted machine coordinate at half one output unit,
+            # not binary64 cancellation noise (25.4 - 88.4 + 60).
+            if abs(z + 3) > 0.5 / 10**self.machine.decimals:
                 raise ValueError('Carvera G53 retract requires planned gauge-line machine Z=-3; plan the retract')
             self.retracted = True
             return []
@@ -171,8 +204,10 @@ class CarveraDecoder(NativeGCodeDecoder):
         # Reject alternate M6 shapes and H words, even if the generic reader
         # could interpret them as a separate length-register activation.
         words = re.findall(r'([A-Z])\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))', line)
-        if any(a in 'HT' or a == 'M' and float(v) in (6, 30) for a, v in words):
-            raise ValueError('Carvera requires T<n> M6 with automatic length, no H words')
+        if any(a in 'HT' or a == 'M' and float(v) in (6, 7, 9, 30, 400) for a, v in words):
+            raise ValueError(
+                'Carvera requires T<n> M6 without H; air requires standalone M400 immediately before M7 or M9'
+            )
         events = super().read_line(line, context)
         if any(getattr(e, 'curve', None) is not None for e in events):
             self.retracted = False

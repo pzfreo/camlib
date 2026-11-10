@@ -118,13 +118,17 @@ class RustCarveraPostTest(unittest.TestCase):
         start = (5, 5, 12)
         setting = replace(m.tools[0], position_after_mm=start)
         m = replace(m, tools=(setting,))
-        for plane, center, axis in (('xy', (0, 5, 12), 2), ('xz', (5, 5, 7), 1), ('yz', (5, 0, 12), 0)):
+        for plane, center, axis, quarter_end in (
+            ('xy', (0, 5, 12), 2, (0, 10, 12)),
+            ('xz', (5, 5, 7), 1, (10, 5, 7)),
+            ('yz', (5, 0, 12), 0, (5, 0, 17)),
+        ):
             for helical in (False, True):
-                end = list(start)
+                end = list(quarter_end)
                 if helical:
                     end[axis] -= 1
                 end = tuple(end)
-                curve = (Helix if helical else Arc)(start, end, center, math.tau, plane)
+                curve = (Helix if helical else Arc)(start, end, center, math.pi / 2, plane)
                 p = Program(
                     'carvera-program',
                     '1',
@@ -146,10 +150,113 @@ class RustCarveraPostTest(unittest.TestCase):
                 self.assertEqual(rs['program'], py)
                 self.assertIn('G3 ', py)
                 self.assertNotIn('G43', py)
+                self.assertEqual(py.count('G17\n'), 1)
                 if plane == 'xy' and helical:
                     path = ROOT / 'fixtures/posts/rust/carvera-program'
                     self.assertEqual(plain(source), json.loads(path.with_suffix('.json').read_text()))
                     self.assertEqual(py, path.with_suffix('.nc').read_text())
+
+    def test_reference_limits(self):
+        import math
+
+        m = machine_for(drill_job())
+        for changes, message in (
+            (dict(max_sweep_rad=math.pi + 0.01), '180'),
+            (dict(max_tool_number=7), '1..6'),
+            (dict(max_length_register=7), '1..6'),
+        ):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, message):
+                replace(m, **changes)
+            source = plain(post_job_input(drill_job(), 'top', machine=m))
+            source['machine'].update(changes)
+            with self.assertRaisesRegex(ValueError, message):
+                post_job(source)
+
+    def test_air_requires_immediately_preceding_m400(self):
+        c = example('carvera_post')
+        j = drill_job()
+        m = machine_for(j)
+        header = j.compile().setup('top').program_header()
+        d = c.CarveraDecoder(m, header)
+        for line in ('G21', 'G90', 'G17', 'G94', 'M5'):
+            d.read_line(line)
+        with self.assertRaisesRegex(ValueError, 'M400'):
+            d.read_line('M9')
+        d.read_line('M400')
+        d.read_line('M9')
+        for line in ('M5', 'G17', '', 'M400', 'M30'):
+            d = c.CarveraDecoder(m, header)
+            d.read_line('M400')
+            with self.subTest(line=line), self.assertRaisesRegex(ValueError, 'immediately'):
+                d.read_line(line)
+        for line in ('M7', 'M07', 'M9', 'M09', 'M400 P1'):
+            d = c.CarveraDecoder(m, header)
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                d.read_line(line)
+        result, _ = self.assert_job(j)
+        lines = result['program'].splitlines()
+        for i, line in enumerate(lines):
+            if line in ('M7', 'M9'):
+                self.assertEqual(lines[i - 1], 'M400')
+            if line == 'M400':
+                self.assertIn(lines[i + 1], ('M7', 'M9'))
+
+    def test_retract_at_posted_resolution(self):
+        c = example('carvera_post')
+        j = drill_job()
+        header = j.compile().setup('top').program_header()
+        m = replace(machine_for(j), work_to_machine=WorkFrame(origin_mm=(0, 0, -88.4)))
+        header = replace(header, initial_position_mm=(0, 0, 25.4))
+        self.assertNotEqual(25.4 - 88.4 + 60, -3)
+        for delta, accepted in ((0, True), (0.00049, True), (0.00051, False), (-0.00051, False)):
+            d = c.CarveraDecoder(m, replace(header, initial_position_mm=(0, 0, 25.4 + delta)))
+            post = c.CarveraPost(m)
+            for line in post._call('on_begin', header, limit=32):
+                d.read_line(line)
+            if accepted:
+                d.read_line('G53 G0 Z-3')
+            else:
+                with self.assertRaisesRegex(ValueError, 'plan the retract'):
+                    d.read_line('G53 G0 Z-3')
+
+    def test_mutated_tool_word_is_caught_by_decode_and_compare(self):
+        from camlib.motion import Program, WorkOffset, ToolChange
+        from camlib.post import post_events
+
+        c = example('carvera_post')
+        j = drill_job()
+        header = j.compile().setup('top').program_header()
+        m = machine_for(j)
+        other = replace(header.tools[0], id='other')
+        m = replace(m, tools=(*m.tools, replace(m.tools[0], tool='other', number=2, length_register=2)))
+        p = Program(
+            'mutated',
+            '1',
+            (*header.tools, other),
+            header.initial_position_mm,
+            (WorkOffset(1), ToolChange(m.tools[0].tool, 1, 1, header.initial_position_mm)),
+        )
+
+        class Broken(c.CarveraPost):
+            def on_tool_change(self, event):
+                super().on_tool_change(replace(event, number=2))
+
+        self.assertTrue(list(post_events(p, p.events, m, post=c.CarveraPost, decoder=c.CarveraDecoder)))
+        with self.assertRaises(ValueError):
+            list(post_events(p, p.events, m, post=Broken, decoder=c.CarveraDecoder))
+
+    def test_plane_modes_and_planner_documentation(self):
+        c = example('carvera_post')
+        post = c.CarveraPost(machine_for(drill_job()))
+        post._limit = 32
+        for code in ('G17', 'G17', 'G18', 'G18', 'G19', 'G19', 'G17'):
+            post.emit(code)
+        self.assertEqual(post._lines, ['G17', 'G18', 'G19', 'G17'])
+
+    def test_planner_premise_is_geometric_not_zero_corner_speed(self):
+        doc = (ROOT / 'docs/carvera-post.md').read_text()
+        self.assertNotIn('minimum planner speed configured to zero', doc)
+        self.assertIn('does not actually deviate', doc)
 
     def test_refusals(self):
         c = example('carvera_post')
@@ -188,7 +295,7 @@ class RustCarveraPostTest(unittest.TestCase):
 
         def decoder():
             d = c.CarveraDecoder(m, header)
-            for line in ('G21', 'G90', 'G17', 'G94', 'G54', 'M5', 'M9'):
+            for line in ('G21', 'G90', 'G17', 'G94', 'G54', 'M5', 'M400', 'M9'):
                 d.read_line(line)
             return d
 
@@ -210,6 +317,7 @@ class RustCarveraPostTest(unittest.TestCase):
             'G53 G0 Z-3\n',
             'M1',
             'M6',
+            'T1 M6 C1',
             'T1',
             'H1',
             'M30',

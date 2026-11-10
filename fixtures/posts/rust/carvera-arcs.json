@@ -346,7 +346,7 @@
     ],
     "arcs": true,
     "helices": true,
-    "max_sweep_rad": 6.283185307179586,
+    "max_sweep_rad": 3.141592653589793,
     "max_tool_number": 6,
     "max_length_register": 6,
     "tool_changes": true,

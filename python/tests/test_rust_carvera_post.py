@@ -254,7 +254,7 @@ class RustCarveraPostTest(unittest.TestCase):
         self.assertEqual(post._lines, ['G17', 'G18', 'G19', 'G17'])
 
     def test_planner_premise_is_geometric_not_zero_corner_speed(self):
-        doc = (ROOT / 'docs/carvera-post.md').read_text()
+        doc = (ROOT / 'docs/carvera-post.md').read_text(encoding='utf-8')
         self.assertNotIn('minimum planner speed configured to zero', doc)
         self.assertIn('does not actually deviate', doc)
 

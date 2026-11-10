@@ -108,3 +108,107 @@ fn haas_job_replays_and_applies_the_gate() {
         serde_json::json!(["unchecked_machine"])
     );
 }
+
+#[test]
+fn controller_declaration_cannot_be_overridden_by_a_default_post_or_dialect() {
+    let cancel = AtomicBool::new(false);
+    let mut input: Value = serde_json::from_str(INPUT).unwrap();
+    input["post"] = "default".into();
+    assert!(
+        camlib::gcode::post_program(&input.to_string(), &cancel)
+            .unwrap_err()
+            .contains("unknown field `post`")
+    );
+    let mut input: Value = serde_json::from_str(INPUT).unwrap();
+    let default: Value =
+        serde_json::from_str(include_str!("../fixtures/posts/rust/standalone-rest.json")).unwrap();
+    input["machine"]["dialect"] = default["machine"]["dialect"].clone();
+    // Match the declared peck distances so this isolates command identity,
+    // rather than refusing an earlier Setting 22 disagreement.
+    input["machine"]["controller"]["setting_22_mm"] = 0.254.into();
+    input["machine"]["controller"]["setting_52_mm"] = 0.into();
+    assert!(
+        camlib::gcode::post_program(&input.to_string(), &cancel)
+            .unwrap_err()
+            .contains("reference command mapping")
+    );
+    // With the actual matching declaration, variant dispatch selects Haas,
+    // including its own independently versioned decoder, never the default.
+    let report: Value =
+        serde_json::from_str(&camlib::gcode::post_program(INPUT, &cancel).unwrap()).unwrap();
+    assert!(
+        report["program"]
+            .as_str()
+            .unwrap()
+            .starts_with("%\nO1000\n")
+    );
+    assert_eq!(
+        report["definition"]["post_version"],
+        camlib::gcode::post::HAAS_VERSION
+    );
+    assert_eq!(
+        report["definition"]["decoder_version"],
+        camlib::gcode::decode::HAAS_VERSION
+    );
+}
+
+#[test]
+fn missing_peck_return_distance_is_refused_without_nan() {
+    use camlib::gcode::controller::Controller;
+    use camlib::gcode::post::{DefaultPost, Hook};
+    use camlib::motion::{DrillCycle, Event};
+    let input: Value = serde_json::from_str(INPUT).unwrap();
+    let mut machine: Machine = serde_json::from_value(input["machine"].clone()).unwrap();
+    let Some(Controller::HaasNGC(h)) = &mut machine.controller else {
+        panic!("fixture controller")
+    };
+    h.setting_22_mm = Some(0.254);
+    h.setting_52_mm = Some(0.);
+    machine.dialect.peck_reentry_mm = Some(0.254);
+    machine.dialect.chip_break_lift_mm = Some(0.254);
+    machine.dialect.commands.extend([
+        camlib::gcode::Command {
+            effect: "peck_cycle".into(),
+            code: "G83".into(),
+        },
+        camlib::gcode::Command {
+            effect: "chip_break_cycle".into(),
+            code: "G73".into(),
+        },
+    ]);
+    machine.validate().unwrap();
+    for (cycle, name) in [
+        (DrillCycle::Peck, "reentry_clearance_mm"),
+        (DrillCycle::ChipBreak, "chip_break_lift_mm"),
+    ] {
+        let event = Event::Cycle {
+            cycle,
+            center_mm: [8., 8.],
+            z_mm: 4.,
+            r_mm: 11.,
+            initial_z_mm: 12.,
+            feed_mm_min: 150.,
+            peck_mm: Some(1.5),
+            dwell_s: None,
+            reentry_mm: None,
+            lift_mm: None,
+            shift_mm: None,
+            covers: 1,
+        };
+        let error = DefaultPost::new(machine.clone())
+            .call(Hook::Event(&event), 8)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "Haas {} requires the operation {name}: declare its return distance in mm",
+                if cycle == DrillCycle::Peck {
+                    "G83"
+                } else {
+                    "G73"
+                }
+            )
+        );
+        assert!(!error.contains("NaN"));
+    }
+}

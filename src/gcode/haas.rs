@@ -6,12 +6,6 @@ use crate::motion::Plane;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "name", deny_unknown_fields)]
-pub enum Controller {
-    #[serde(rename = "haas_ngc")]
-    HaasNGC(HaasNGC),
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HaasNGC {
     pub coordinate_system: String,
@@ -33,13 +27,9 @@ pub struct HaasNGC {
 fn required_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
     Option::deserialize(d)
 }
-impl Controller {
-    pub fn haas(&self) -> &HaasNGC {
-        let Self::HaasNGC(h) = self;
-        h
-    }
+impl HaasNGC {
     pub fn validate(&self, m: &Machine) -> Result<(), String> {
-        let h = self.haas();
+        let h = self;
         let d = &m.dialect;
         let require = |ok: bool, message: &str| if ok { Ok(()) } else { Err(message.to_string()) };
         require(

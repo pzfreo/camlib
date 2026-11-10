@@ -4,6 +4,7 @@
 //! source motion's attribution (id, operation, kind); coordinates, feeds,
 //! tools, offsets and spindle states come from the words. It shares no code
 //! with the formatter (`super::post`). Unknown words or effects are refused.
+use super::controller::Controller;
 use super::machine::{Code, Machine, OPTIONAL_EFFECTS, REQUIRED, ToolSetting, code_token};
 use crate::motion::{
     CompensationSide, Coolant, Curve, Event, Motion, MoveKind, Plane, SpindleDirection, Vec3,
@@ -15,6 +16,7 @@ mod probe;
 
 /// The version string of the Python decoder this one follows.
 pub const VERSION: &str = "configured_motion_native_v1";
+pub const HAAS_VERSION: &str = "haas-ngc-2020-nominal-1";
 
 pub fn plane_name(p: Plane) -> &'static str {
     match p {
@@ -253,7 +255,10 @@ impl Decoder {
             .filter(|r| !self.ready.contains(*r))
             .collect();
         if missing.is_empty() {
-            self.haas_initialized()
+            match &self.machine.controller {
+                None => Ok(()),
+                Some(Controller::HaasNGC(h)) => self.haas_initialized(h),
+            }
         } else {
             Err(format!(
                 "incomplete explicit decoder modal initialization: {missing:?}"
@@ -339,10 +344,9 @@ impl Decoder {
         line: &str,
         context: Option<&Context>,
     ) -> Result<Vec<Event>, String> {
-        if self.machine.controller.is_some() {
-            self.read_haas(line, context)
-        } else {
-            self.read_base(line, context)
+        match self.machine.controller.clone() {
+            None => self.read_base(line, context),
+            Some(Controller::HaasNGC(h)) => self.read_haas(&h, line, context),
         }
     }
 
@@ -1517,17 +1521,17 @@ impl Decoder {
     }
 
     fn length(&mut self, number: Option<f64>) -> Result<Event, String> {
-        if self
-            .machine
-            .controller
-            .as_ref()
-            .is_some_and(|c| c.haas().h_t_agreement)
-            && self
-                .active
-                .as_ref()
-                .is_none_or(|t| number != Some(t.number as f64))
-        {
-            return Err("Haas Setting15 T/H disagreement".into());
+        match &self.machine.controller {
+            Some(Controller::HaasNGC(h))
+                if h.h_t_agreement
+                    && self
+                        .active
+                        .as_ref()
+                        .is_none_or(|t| number != Some(t.number as f64)) =>
+            {
+                return Err("Haas Setting15 T/H disagreement".into());
+            }
+            None | Some(Controller::HaasNGC(_)) => {}
         }
 
         let Some(active) = self.active.clone() else {

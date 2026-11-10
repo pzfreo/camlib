@@ -93,7 +93,7 @@ pub struct ToolSetting {
 #[serde(deny_unknown_fields)]
 pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller: Option<super::haas::Controller>,
+    pub controller: Option<super::controller::Controller>,
     pub name: String,
     pub tools: Vec<ToolSetting>,
     pub dialect: Dialect,

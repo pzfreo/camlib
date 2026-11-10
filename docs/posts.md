@@ -358,6 +358,15 @@ there are no inferred machine values. Complete synthetic inputs are in
 and [`haas-program.json`](../fixtures/posts/rust/haas-program.json). The base machine and `crash_model` stay
 in their existing locations. Rust validates the same reference premises.
 
+**Compatibility:** Haas Python posting definitions now record reference-specific
+fields under `definition["machine"]["controller"]`, rather than flat under
+`definition["machine"]`. For example, `coordinate_system` moves to
+`definition["machine"]["controller"]["coordinate_system"]`. Consumers of stored
+metadata must update those paths. Base-machine fields stay at their existing
+paths; Python machine attributes and the emitted Haas program are unchanged.
+Calling Python posting with a declared Haas machine and omitted/default post
+classes now refuses instead of emitting a default-post program.
+
 The name selects controller formatter hooks and an independent actual-word
 decoder guard. The Haas formatter extends the common numeric and event hooks;
 the Haas decoder parses framing, resets, numeric notation and controller side
@@ -366,10 +375,21 @@ It imports no formatter code. Both use the existing engine, intent checker,
 posted-stock replay, machine check and release gate. This extends the #142/#159
 posting path, respecting decisions 4–7 and 11; it adds no parallel job or
 verification path. Controller-specific program and decoder versions enter the
-posting identity.
+posting identity from the selected variant. Rust's controller enum lives in
+`gcode::controller`; every controller-specific formatter and decoder hook matches
+it exhaustively. Adding a variant requires explicit hook and identity choices.
 
-Python classes and user subclasses continue to execute as Python, with explicit
-`post`/`decoder` as before. Serialization does not compile or dispatch
+Python classes and user subclasses continue to execute as Python. A declared
+controller requires an explicitly matching `post` and `decoder`: both classes
+must declare the same `controller_name` as `machine.controller.name`. Python
+refuses a default or mismatched pair before producing a posting definition or
+any blocks. For Haas use `job.post_nc(..., machine=machine,
+post=HaasNGCPost, decoder=HaasNGCDecoder)`. Rust selects the matching pair directly
+from the same declaration; its JSON accepts no separate post override. Machines
+without a controller continue to use the existing default post. This prevents
+the same declared machine from silently using the default in Python and Haas
+in Rust. Custom Python subclasses remain Python; the marker declares their
+controller contract and is inherited by controller-specific subclasses. Serialization does not compile or dispatch
 Python code. To run the shipped Haas reference in Rust, pass its machine's
 `to_dict()` through `post_job_input`/`post_job` or `cam-post`; supply explicit
 `LoweringOptions()` for the convenience iterator's linear curve policy.

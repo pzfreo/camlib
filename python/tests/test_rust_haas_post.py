@@ -65,11 +65,13 @@ class RustHaasPostTest(unittest.TestCase):
             (boring_job(spindle_stop=True), {}, "M5"),
         ]
         for j, options, code in cases:
-            with self.subTest(code=code):
-                rust = self.assert_job(j, machine_for(j, **options), lowering=LoweringOptions())
-                self.assertTrue(rust["released"])
-                self.assertIn(code, rust["program"])
-                self.assertNotIn("G86", rust["program"])
+            for units, decimals in (("mm", 3), ("inch", 4)):
+                with self.subTest(code=code, units=units):
+                    m = replace(machine_for(j, **options), output_units=units, decimals=decimals)
+                    rust = self.assert_job(j, m, lowering=LoweringOptions())
+                    self.assertTrue(rust["released"])
+                    self.assertIn(code if units == "mm" or not code.startswith("G4 P") else "G4 P", rust["program"])
+                    self.assertNotIn("G86", rust["program"])
         j = job()
         self.assertFalse(self.assert_job(j, machine_for(j), accept=())["released"])
 
@@ -155,6 +157,76 @@ class RustHaasPostTest(unittest.TestCase):
             python = "".join(c.text for c in haas.post_haas(p, m))
             rust = json.loads(native.post_program(json.dumps(dict(program=p.to_dict(), machine=m.to_dict()))))
             self.assertEqual(rust["program"], python)
+
+    def test_controller_requires_matching_python_pair(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from camlib.post import GCodePost, NativeGCodeDecoder, PostEngine
+        from test_drill_cycles import job
+
+        h = example("haas_ngc_post")
+        j = job()
+        m = machine_for(j)
+        for post, decoder in (
+            (GCodePost, NativeGCodeDecoder),
+            (h.HaasNGCPost, NativeGCodeDecoder),
+            (GCodePost, h.HaasNGCDecoder),
+        ):
+            with self.subTest(post=post.__name__, decoder=decoder.__name__):
+                with self.assertRaisesRegex(ValueError, "controller 'haas_ngc' requires matching post and decoder"):
+                    PostEngine(m, post, decoder=decoder)
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "mismatch.nc"
+            with self.assertRaisesRegex(ValueError, "requires matching post and decoder"):
+                j.post_nc("top", machine=m, path=target, accept={"unchecked_machine"})
+            self.assertFalse(target.exists())
+        # Identical declared machine, matching explicit Python pair and Rust
+        # variant selection: both must produce a framed Haas program.
+        self.assertTrue(self.assert_job(j, m)["program"].startswith("%\nO1000\n"))
+
+    def test_exact_ijk_job_arcs_compensation_and_gate(self):
+        from test_cutter_compensation import job
+        from camlib.planar import PlanarRegion, Component, Boundary
+        from camlib import StreamChecks, StockContactOptions
+
+        for comp in (False, True):
+            j = job(compensation="wear" if comp else "computer")
+            setup = j.setups[0]
+            node = setup.operations[0]
+            circle = PlanarRegion("round", (Component(Boundary.circle((20, 20), 7)),), 1e-4)
+            node = replace(node, operation=replace(node.operation, region=circle))
+            j = replace(
+                j,
+                setups=(
+                    replace(setup, operations=(node,), verification=StreamChecks(stock_contact=StockContactOptions())),
+                ),
+            )
+            m = machine_for(j, curve_policy="exact_ijk", cutter_compensation=comp)
+            for accept in (("unchecked_machine",), ()):
+                with self.subTest(compensation=comp, accept=accept):
+                    result = self.assert_job(j, m, accept=accept, lowering=LoweringOptions(native_arcs=True))
+                    self.assertGreater(result["posting"]["arc_output"]["native"], 0)
+                    for key in ("lines_policy", "lines_machine", "lines_precision"):
+                        self.assertEqual(result["posting"]["arc_output"][key], 0)
+                    self.assertEqual(result["released"], bool(accept))
+                    if accept:
+                        self.assertRegex(result["program"], r"(?m)^G[23] ")
+                        if comp:
+                            self.assertIn("G1 G41 D7", result["program"])
+                            self.assertIn("G1 G40", result["program"])
+
+    def test_missing_cycle_return_distance_is_clear(self):
+        from camlib.motion import Cycle
+        from test_drill_cycles import job
+
+        h = example("haas_ngc_post")
+        m = machine_for(job(), setting_22_mm=0.254, setting_52_mm=0)
+        for cycle, field in (("peck", "reentry_clearance_mm"), ("chip_break", "chip_break_lift_mm")):
+            event = Cycle(cycle, (8, 8), 4, 11, 12, 150, 1, peck_mm=1.5)
+            with self.assertRaisesRegex(
+                ValueError, f"requires the operation {field}: declare its return distance in mm"
+            ):
+                h.HaasNGCPost(m).on_cycle(event)
 
     def test_refusals(self):
         from test_drill_cycles import job

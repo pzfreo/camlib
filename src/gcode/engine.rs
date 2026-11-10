@@ -140,12 +140,13 @@ impl Engine {
             return Err("initialization must not move/select tools or change source setup".into());
         }
         decoder.validate_initialized()?;
+        let identity = super::controller::identity(m.controller.as_ref());
         let definition = serde_json::json!({
             "machine": serde_json::to_value(m).map_err(|e| e.to_string())?,
-            "post": if m.controller.is_some() {"camlib::gcode::post::HaasNGC"} else {"camlib::gcode::post::DefaultPost"},
-            "post_version": if m.controller.is_some() {"haas-ngc-2020-2"} else {super::post::VERSION},
-            "decoder": if m.controller.is_some() {"camlib::gcode::decode::HaasNGC"} else {"camlib::gcode::decode::Decoder"},
-            "decoder_version": if m.controller.is_some() {"haas-ngc-2020-nominal-1"} else {super::decode::VERSION},
+            "post": identity.post,
+            "post_version": identity.post_version,
+            "decoder": identity.decoder,
+            "decoder_version": identity.decoder_version,
         });
         let settings = Settings {
             capabilities: m.capabilities(),

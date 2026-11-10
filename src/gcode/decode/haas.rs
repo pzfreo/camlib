@@ -12,30 +12,27 @@ pub(super) struct HaasState {
     smoothing_reset: bool,
 }
 impl Decoder {
-    pub(super) fn haas_initialized(&self) -> Result<(), String> {
-        if let Some(c) = &self.machine.controller {
-            let h = c.haas();
-            let s = &self.haas;
-            if !(s.opened
-                && s.number == Some(h.program_number)
-                && (s.rotation_off || !h.rotation_scaling)
-                && (s.scaling_off || !h.rotation_scaling)
-                && s.mirror_off
-                && s.smoothing_reset)
-            {
-                return Err(
-                    "incomplete Haas program/rotation/scaling/mirror/G187 initialization".into(),
-                );
-            }
+    pub(super) fn haas_initialized(&self, h: &crate::gcode::haas::HaasNGC) -> Result<(), String> {
+        let s = &self.haas;
+        if !(s.opened
+            && s.number == Some(h.program_number)
+            && (s.rotation_off || !h.rotation_scaling)
+            && (s.scaling_off || !h.rotation_scaling)
+            && s.mirror_off
+            && s.smoothing_reset)
+        {
+            return Err(
+                "incomplete Haas program/rotation/scaling/mirror/G187 initialization".into(),
+            );
         }
         Ok(())
     }
     pub(super) fn read_haas(
         &mut self,
+        h: &crate::gcode::haas::HaasNGC,
         line: &str,
         context: Option<&Context>,
     ) -> Result<Vec<Event>, String> {
-        let h = self.machine.controller.as_ref().unwrap().haas().clone();
         if self.ended
             || line.len() > 1024
             || line

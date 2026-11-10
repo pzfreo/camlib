@@ -12,7 +12,10 @@ from test_rust_post import ROOT, example, plain, python_release
 def machine_for(job, **settings):
     from test_drill_cycles import DrillCycleTest
 
-    return DrillCycleTest.haas(None, job, **settings)[1]
+    machine = DrillCycleTest.haas(None, job, **settings)[1]
+    if settings.get("cutter_compensation"):
+        machine = replace(machine, tools=tuple(replace(t, diameter_register=7) for t in machine.tools))
+    return machine
 
 
 class RustHaasPostTest(unittest.TestCase):
@@ -69,18 +72,30 @@ class RustHaasPostTest(unittest.TestCase):
     def test_job_golden_and_machine_model(self):
         from test_drill_cycles import job
         from test_machine import model
+        from camlib.machine import Box
 
         j = job(dwell_s=0.5)
         m = machine_for(j)
         rust = self.assert_job(j, m)
         f = ROOT / "fixtures/posts/rust/haas-drill"
         self.assertEqual(rust["program"], f.with_suffix(".nc").read_text())
-        self.assertEqual(
-            plain(post_job_input(j, "top", machine=m, accept=("unchecked_machine",))),
-            json.loads(f.with_suffix(".json").read_text()),
-        )
+        source = plain(post_job_input(j, "top", machine=m, accept=("unchecked_machine",)))
+        source["manifest"]["run"]["id"] = "haas-drill-fixture"
+        self.assertEqual(source, json.loads(f.with_suffix(".json").read_text()))
         header = j.compile().setup("top").program_header()
         declared = model(header, m)
+        # This drill has a 6 mm holder radius; the generic test model's
+        # 5 mm indexing box does not enclose it. Declare the actual bound.
+        t = header.tools[0]
+        declared = replace(
+            declared,
+            tool_change_routes={
+                t.id: replace(
+                    declared.tool_change_routes[t.id],
+                    index_envelopes=(Box((-7, -7, -t.gauge_length_mm - 1), (7, 7, 1)),),
+                ),
+            },
+        )
         p = header.initial_position_mm
         declared = replace(declared, initial_axes_mm=(p[0], p[1], p[2] + header.tools[0].gauge_length_mm))
         rust = self.assert_job(j, replace(m, crash_model=declared), accept=())

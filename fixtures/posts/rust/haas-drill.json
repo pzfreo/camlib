@@ -2,7 +2,7 @@
   "manifest": {
     "version": 1,
     "run": {
-      "id": "d4470d88cad1496582e95145eeab06af",
+      "id": "haas-drill-fixture",
       "revision": "1@c9825ce5f8466a53ce4cea85da5b84565a4d2a5859fcbe6f2fe81338f928edd0"
     },
     "stock": {

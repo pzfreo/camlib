@@ -111,7 +111,7 @@ impl Decoder {
             rest = rest[1..].trim_start();
             let n = rest
                 .bytes()
-                .take_while(|b| b.is_ascii_digit() || [b'+', b'-', b'.'].contains(b))
+                .take_while(|b| b.is_ascii_digit() || b"+-.".contains(b))
                 .count();
             let word = &rest[..n];
             let value = word

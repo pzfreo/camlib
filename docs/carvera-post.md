@@ -2,7 +2,7 @@
 
 `examples/carvera_post.py` supplies `ReferenceMachine`, `define_machine`,
 `CarveraPost` and `CarveraDecoder`. The Rust/JSON equivalent selects
-`"controller": {"name": "carvera", "initial_gauge_length_mm": ..., 
+`"controller": {"name": "carvera", "initial_gauge_length_mm": ...,
 "unmodified_coordinates": true, "automatic_tool_length": true}` inside the
 ordinary `Machine.to_dict()` shape. Other machine fields retain their existing
 locations. See the complete synthetic [drilling input](../fixtures/posts/rust/carvera-drill.json)

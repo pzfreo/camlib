@@ -193,8 +193,17 @@ class RustHaasPostTest(unittest.TestCase):
             j = job(compensation="wear" if comp else "computer")
             setup = j.setups[0]
             node = setup.operations[0]
-            circle = PlanarRegion("round", (Component(Boundary.circle((20, 20), 7)),), 1e-4)
-            node = replace(node, operation=replace(node.operation, region=circle))
+            # Exact analytic geometry, with a tighter (binary-exact) boundary
+            # budget than the default 0.01 mm. The planner adds the 3 mm tool
+            # radius and half this budget: (7 - 1/256) + 3 + 1/256 = 10.
+            # About (16, 16), both semicircles then have integer endpoints and
+            # I/J words. No radius-word search or libm-dependent equality of
+            # nearly equal rounded hypots is needed (the old radius was 10.0051).
+            boundary_budget = 1 / 128
+            circle = PlanarRegion("round", (Component(Boundary.circle((16, 16), 7 - boundary_budget / 2)),), 0)
+            node = replace(
+                node, operation=replace(node.operation, region=circle, boundary_tolerance_mm=boundary_budget)
+            )
             j = replace(
                 j,
                 setups=(
@@ -207,10 +216,12 @@ class RustHaasPostTest(unittest.TestCase):
                     result = self.assert_job(j, m, accept=accept, lowering=LoweringOptions(native_arcs=True))
                     self.assertGreater(result["posting"]["arc_output"]["native"], 0)
                     for key in ("lines_policy", "lines_machine", "lines_precision"):
-                        self.assertEqual(result["posting"]["arc_output"][key], 0)
+                        self.assertEqual(result["posting"]["arc_output"][key], 0, key)
                     self.assertEqual(result["released"], bool(accept))
                     if accept:
                         self.assertRegex(result["program"], r"(?m)^G[23] ")
+                        self.assertIn("G2 X26. Y16. I10. J0. F600.\n", result["program"])
+                        self.assertIn("G2 X6. Y16. I-10. J0. F600.\n", result["program"])
                         if comp:
                             self.assertIn("G1 G41 D7", result["program"])
                             self.assertIn("G1 G40", result["program"])

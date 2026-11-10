@@ -59,9 +59,17 @@ and Makera's [Carvera.cps](https://github.com/MakeraInc/CarveraProfiles/blob/mai
 
 `unmodified_coordinates=true` declares zero G92, no levelling/flex compensation,
 rotation or scaling, and ordinary Cartesian stored offsets matching
-`work_to_machine`. The post does not issue undocumented G61/G64, G40, G80,
+`work_to_machine`. It also declares firmware junction deviation (including the Z override) and
+minimum planner speed configured to zero: the firmware
+[Planner.cpp](https://github.com/Carvera-Community/Carvera_Community_Firmware/blob/master/src/modules/robot/Planner.cpp)
+sets junction entry speed to the minimum planner speed when junction deviation
+is zero. This is the premise for fixed exact-stop readiness; the firmware
+default junction deviation is **not** zero. If these premises do not hold,
+declare `unmodified_coordinates=false` and posting refuses.
+The post does not issue undocumented G61/G64, G40, G80,
 G91.1 or G97. Fixed-mode readiness describes this restricted nominal model;
-it does not establish physical controller interpolation or corner blending.
+the caller must establish those settings on the physical controller. Firmware
+arc segmentation and binary32 arithmetic are not emulated by this nominal model.
 The post does not qualify controller firmware or machine configuration.
 
 The setup must **plan its retracts**, including the initial and final safe poses.

@@ -70,7 +70,7 @@ class RustHaasPostTest(unittest.TestCase):
                     m = replace(machine_for(j, **options), output_units=units, decimals=decimals)
                     rust = self.assert_job(j, m, lowering=LoweringOptions())
                     self.assertTrue(rust["released"])
-                    self.assertIn(code if units == "mm" or not code.startswith("G4 P") else "G4 P", rust["program"])
+                    self.assertIn(code, rust["program"])
                     self.assertNotIn("G86", rust["program"])
         j = job()
         self.assertFalse(self.assert_job(j, machine_for(j), accept=())["released"])

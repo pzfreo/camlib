@@ -11,11 +11,13 @@ use crate::motion::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod carvera;
 mod haas;
 mod probe;
 
 /// The version string of the Python decoder this one follows.
 pub const VERSION: &str = "configured_motion_native_v1";
+pub const CARVERA_VERSION: &str = "carvera-nominal-1";
 pub const HAAS_VERSION: &str = "haas-ngc-2020-nominal-1";
 
 pub fn plane_name(p: Plane) -> &'static str {
@@ -140,6 +142,7 @@ fn unused(values: &[(char, f64)], used: &BTreeSet<char>) -> Result<(), String> {
 #[derive(Clone)]
 pub struct Decoder {
     haas: haas::HaasState,
+    carvera_retracted: bool,
     machine: Machine,
     pub position: Vec3,
     pub units: Option<f64>,
@@ -218,7 +221,15 @@ impl Decoder {
             position: initial_position,
             units: None,
             plane: None,
-            ready: d.fixed_modes.iter().cloned().collect(),
+            ready: d
+                .fixed_modes
+                .iter()
+                .cloned()
+                .chain(
+                    matches!(machine.controller, Some(Controller::Carvera(_)))
+                        .then(|| "length".to_string()),
+                )
+                .collect(),
             active: None,
             selected: None,
             length: None,
@@ -228,6 +239,7 @@ impl Decoder {
             coolant: Coolant::Off,
             ended: false,
             haas: haas::HaasState::default(),
+            carvera_retracted: false,
             direction: SpindleDirection::Cw,
             tap_return: None,
             cycle_active: false,
@@ -256,7 +268,7 @@ impl Decoder {
             .collect();
         if missing.is_empty() {
             match &self.machine.controller {
-                None => Ok(()),
+                None | Some(Controller::Carvera(_)) => Ok(()),
                 Some(Controller::HaasNGC(h)) => self.haas_initialized(h),
             }
         } else {
@@ -347,6 +359,7 @@ impl Decoder {
         match self.machine.controller.clone() {
             None => self.read_base(line, context),
             Some(Controller::HaasNGC(h)) => self.read_haas(&h, line, context),
+            Some(Controller::Carvera(c)) => self.read_carvera(&c, line, context),
         }
     }
 
@@ -1531,7 +1544,7 @@ impl Decoder {
             {
                 return Err("Haas Setting15 T/H disagreement".into());
             }
-            None | Some(Controller::HaasNGC(_)) => {}
+            None | Some(Controller::HaasNGC(_)) | Some(Controller::Carvera(_)) => {}
         }
 
         let Some(active) = self.active.clone() else {

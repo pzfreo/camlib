@@ -58,6 +58,7 @@ pub struct DefaultPost {
 /// `PostProcessor.version`/`GCodePost.version` of the Python post this one
 /// follows.
 pub const VERSION: &str = "2";
+pub const CARVERA_VERSION: &str = "carvera-nominal-1";
 pub const HAAS_VERSION: &str = "haas-ngc-2020-2";
 
 fn invalid_block(line: &str) -> bool {
@@ -207,7 +208,7 @@ impl DefaultPost {
                     }
                 }
             }
-            None | Some(Controller::HaasNGC(_)) => {}
+            None | Some(Controller::HaasNGC(_)) | Some(Controller::Carvera(_)) => {}
         }
         Ok(words)
     }
@@ -330,6 +331,10 @@ impl DefaultPost {
                 length_register,
                 ..
             } => {
+                if let Some(Controller::Carvera(_)) = &self.machine.controller {
+                    self.emit(&["G53 G0 Z-3"])?;
+                    return self.emit(&[&format!("T{number}"), "M6"]);
+                }
                 if d.tool_change == "lathe_t" {
                     if !((1..=99).contains(number) && (1..=99).contains(length_register)) {
                         return Err("T<nn><oo> needs a tool and an offset number of 1..99".into());
@@ -388,6 +393,12 @@ impl DefaultPost {
             Event::CutterCompensation { side, .. } => self.on_cutter_compensation(*side),
             Event::Probe { cycle, covers } => self.on_probe(cycle, *covers),
             Event::Beam { power_percent } => {
+                if matches!(self.machine.controller, Some(Controller::Carvera(_))) {
+                    return Err(
+                        "Carvera reference supports milling only; beam control is not declared"
+                            .into(),
+                    );
+                }
                 let s_max = d.beam_s_max.ok_or(
                     "this dialect declares no beam (beam_s_max): it cannot post plasma or laser cutting",
                 )?;
@@ -866,13 +877,20 @@ impl DefaultPost {
     }
 
     fn on_begin(&mut self, tolerance_mm: f64) -> Result<(), String> {
+        if let Some(Controller::Carvera(_)) = &self.machine.controller {
+            self.geometry_tolerance_mm = tolerance_mm;
+            for code in ["G21", "G90", "G17", "G94", "M5", "M9"] {
+                self.emit(&[code])?;
+            }
+            return Ok(());
+        }
         match &self.machine.controller {
             Some(Controller::HaasNGC(h)) => {
                 let number = h.program_number;
                 self.emit(&["%"])?;
                 self.emit(&[&format!("O{number}")])?;
             }
-            None => {}
+            None | Some(Controller::Carvera(_)) => {}
         }
         self.geometry_tolerance_mm = tolerance_mm;
         let d = self.machine.dialect.clone();
@@ -941,7 +959,7 @@ impl DefaultPost {
                 self.emit(&["G187"])?;
                 self.emit(&["G61"])?;
             }
-            None => {}
+            None | Some(Controller::Carvera(_)) => {}
         }
         self.spindle_on = false;
         self.coolant_mode = Coolant::Off;
@@ -1045,7 +1063,7 @@ impl DefaultPost {
                     }
                 }
             }
-            None => {}
+            None | Some(Controller::Carvera(_)) => {}
         }
         let d = self.machine.dialect.clone();
         let effect = cycle_effect(*cycle);
@@ -1186,7 +1204,9 @@ impl DefaultPost {
             Curve::Line { .. } => None,
         };
         match (&self.machine.controller, circular) {
-            (None, _) | (Some(Controller::HaasNGC(_)), None) => {}
+            (None, _)
+            | (Some(Controller::HaasNGC(_)), None)
+            | (Some(Controller::Carvera(_)), _) => {}
             (Some(Controller::HaasNGC(_)), Some((plane, sweep, helix))) => {
                 if plane != crate::motion::Plane::Xy {
                     return Err("native Haas reference arc requires G17".into());
@@ -1401,6 +1421,16 @@ impl DefaultPost {
     }
 
     fn on_finish(&mut self) -> Result<(), String> {
+        if let Some(Controller::Carvera(_)) = &self.machine.controller {
+            if self.spindle_on {
+                self.emit(&["M5"])?;
+            }
+            if self.coolant_mode != Coolant::Off {
+                self.emit(&["M9"])?;
+            }
+            self.emit(&["G53 G0 Z-3"])?;
+            return self.emit(&["M30"]);
+        }
         let d = self.machine.dialect.clone();
         for effect in ["spindle_off", "coolant_off", "length_off", "end"] {
             // Omit a stop only when this post knows the state is already off.
@@ -1416,7 +1446,7 @@ impl DefaultPost {
             Some(Controller::HaasNGC(_)) => {
                 self.emit(&["%"])?;
             }
-            None => {}
+            None | Some(Controller::Carvera(_)) => {}
         }
         Ok(())
     }

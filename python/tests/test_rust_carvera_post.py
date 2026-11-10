@@ -5,6 +5,7 @@ import json
 import unittest
 
 from camlib._buffers import native
+from camlib.simulation import SimulationError
 from camlib.motion import WorkFrame
 from camlib.post import LoweringOptions, ToolSetting, PostEngine, post_job, post_job_input
 from test_rust_post import ROOT, example, plain, python_release
@@ -174,7 +175,7 @@ class RustCarveraPostTest(unittest.TestCase):
             replace(m, initial_gauge_length_mm=m.initial_gauge_length_mm + 0.001),
             replace(m, work_to_machine=WorkFrame(origin_mm=(0, 0, 0))),
         ):
-            with self.assertRaisesRegex(ValueError, 'plan the retract'):
+            with self.assertRaisesRegex(SimulationError, 'ValueError: .*plan the retract'):
                 j.post_nc('top', machine=m, post=c.CarveraPost, decoder=c.CarveraDecoder)
             with self.assertRaisesRegex(ValueError, 'plan the retract'):
                 post_job(post_job_input(j, 'top', machine=m))

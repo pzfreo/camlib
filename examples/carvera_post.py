@@ -54,9 +54,9 @@ class ReferenceMachine(Machine):
     automatic_tool_length: bool
 
     def __post_init__(self):
-        super().__post_init__()
         if self.output_units != 'mm':
             raise ValueError('Carvera requires mm: G20 halts the firmware')
+        super().__post_init__()
         if self.dialect != _dialect():
             raise ValueError('Carvera command mapping differs from the documented subset')
         if not self.unmodified_coordinates or not self.automatic_tool_length:

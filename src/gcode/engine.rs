@@ -142,10 +142,10 @@ impl Engine {
         decoder.validate_initialized()?;
         let definition = serde_json::json!({
             "machine": serde_json::to_value(m).map_err(|e| e.to_string())?,
-            "post": "camlib::gcode::post::DefaultPost",
-            "post_version": super::post::VERSION,
-            "decoder": "camlib::gcode::decode::Decoder",
-            "decoder_version": super::decode::VERSION,
+            "post": if m.controller.is_some() {"camlib::gcode::post::HaasNGC"} else {"camlib::gcode::post::DefaultPost"},
+            "post_version": if m.controller.is_some() {"haas-ngc-2020-2"} else {super::post::VERSION},
+            "decoder": if m.controller.is_some() {"camlib::gcode::decode::HaasNGC"} else {"camlib::gcode::decode::Decoder"},
+            "decoder_version": if m.controller.is_some() {"haas-ngc-2020-nominal-1"} else {super::decode::VERSION},
         });
         let settings = Settings {
             capabilities: m.capabilities(),

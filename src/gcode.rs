@@ -11,6 +11,7 @@
 //! same program and machine (python/tests/test_rust_post.py).
 pub mod decode;
 pub mod engine;
+pub mod haas;
 pub mod machine;
 pub mod post;
 

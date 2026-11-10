@@ -310,7 +310,8 @@ for byte (`python/tests/test_rust_post.py` compares them on the examples and on
 jobs with canned cycles, tapping, cutter compensation, dwells, plasma words,
 probing cycles on both probing back ends (LinuxCNC G38.x and Inspection Plus
 macros, #147), lowering, inch output and traverse feeds). Posts you write in Python stay
-Python; only the default post and the dialects you declare as data run in Rust.
+Python. The default post, dialects declared as data, and the explicitly named
+Haas NGC reference post run in Rust. Other controller subclasses remain Python.
 
 The machine and its dialect cross as JSON: `Machine.to_dict()`, the same form
 a posted run records as its `definition["machine"]`, with the #116
@@ -341,6 +342,43 @@ an error, as in Python: nothing is released.
 
 Not supported yet in Rust, and refused with a message: lathe setups (the
 turning replay) and `schedule_post_feeds`.
+
+### Named controller posts
+
+`Machine.to_dict()` may include a `controller` object with a required `name`.
+Omitting it selects the existing default formatter/decoder and preserves its
+program bytes and definition. Unknown names and unknown options are refused.
+The first named pair is `"name": "haas_ngc"`: the 2020 reference in
+[Haas NGC](haas-ngc-post.md), not a VF-2 machine preset or later firmware alias.
+`examples/haas_ngc_post.py`'s `ReferenceMachine.to_dict()` packs its additional
+fields into this object, including Setting 22/52, program number, curve policy,
+rotation/scaling, tapping and compensation options. All are explicit in JSON;
+there are no inferred machine values. The base machine and `crash_model` stay
+in their existing locations. Rust validates the same reference premises.
+
+The name selects controller formatter hooks and an independent actual-word
+decoder guard. The Haas formatter extends the common numeric and event hooks;
+the Haas decoder parses framing, resets, numeric notation and controller side
+effects independently, then uses the common independent motion/cycle reader.
+It imports no formatter code. Both use the existing engine, intent checker,
+posted-stock replay, machine check and release gate. This extends the #142/#159
+posting path, respecting decisions 4–7 and 11; it adds no parallel job or
+verification path. Controller-specific program and decoder versions enter the
+posting identity.
+
+Python classes and user subclasses continue to execute as Python, with explicit
+`post`/`decoder` as before. Serialization does not compile or dispatch
+Python code. To run the shipped Haas reference in Rust, pass its machine's
+`to_dict()` through `post_job_input`/`post_job` or `cam-post`; supply explicit
+`LoweringOptions()` for the convenience iterator's linear curve policy.
+Changes to the reference must keep both ports byte-identical by tests. Moving
+all editable Python posts into a mandatory registry would require a separate
+issue arguing a change to the documented Python-post contract.
+
+Haas supports G81/G82/G83/G73, G84/G74, G85/G89, dwell and compensation in lead
+blocks under its declared settings. It does not declare G86 (#97): as in Python,
+stop-boring uses explicit source moves; declaring G86 is refused. No real Haas
+machine or controller execution is established by these nominal checks.
 
 ## What a passing post does and does not prove
 

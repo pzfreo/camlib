@@ -104,6 +104,14 @@ class ReferenceMachine(Machine):
     setting_52_mm: float | None = None
     reference: str = 'Haas NGC milling;96-8210 RevN December2020'
 
+    def to_dict(self):
+        data = super().to_dict()
+        from dataclasses import fields
+
+        names = {f.name for f in fields(ReferenceMachine)} - {f.name for f in fields(Machine)}
+        data['controller'] = dict(name='haas_ngc', **{k: data.pop(k) for k in sorted(names)})
+        return data
+
     def __post_init__(self):
         super().__post_init__()
         object.__setattr__(self, 'g92_shift_mm', tuple(islice(iter(self.g92_shift_mm), 4)))

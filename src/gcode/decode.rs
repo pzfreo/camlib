@@ -10,6 +10,7 @@ use crate::motion::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod haas;
 mod probe;
 
 /// The version string of the Python decoder this one follows.
@@ -136,6 +137,7 @@ fn unused(values: &[(char, f64)], used: &BTreeSet<char>) -> Result<(), String> {
 
 #[derive(Clone)]
 pub struct Decoder {
+    haas: haas::HaasState,
     machine: Machine,
     pub position: Vec3,
     pub units: Option<f64>,
@@ -223,6 +225,7 @@ impl Decoder {
             rpm: 0.,
             coolant: Coolant::Off,
             ended: false,
+            haas: haas::HaasState::default(),
             direction: SpindleDirection::Cw,
             tap_return: None,
             cycle_active: false,
@@ -250,7 +253,7 @@ impl Decoder {
             .filter(|r| !self.ready.contains(*r))
             .collect();
         if missing.is_empty() {
-            Ok(())
+            self.haas_initialized()
         } else {
             Err(format!(
                 "incomplete explicit decoder modal initialization: {missing:?}"
@@ -336,6 +339,14 @@ impl Decoder {
         line: &str,
         context: Option<&Context>,
     ) -> Result<Vec<Event>, String> {
+        if self.machine.controller.is_some() {
+            self.read_haas(line, context)
+        } else {
+            self.read_base(line, context)
+        }
+    }
+
+    fn read_base(&mut self, line: &str, context: Option<&Context>) -> Result<Vec<Event>, String> {
         if self.tap_return.is_none()
             && !self.cycle_active
             && !self.machine.dialect.x_diameter
@@ -1506,6 +1517,19 @@ impl Decoder {
     }
 
     fn length(&mut self, number: Option<f64>) -> Result<Event, String> {
+        if self
+            .machine
+            .controller
+            .as_ref()
+            .is_some_and(|c| c.haas().h_t_agreement)
+            && self
+                .active
+                .as_ref()
+                .is_none_or(|t| number != Some(t.number as f64))
+        {
+            return Err("Haas Setting15 T/H disagreement".into());
+        }
+
         let Some(active) = self.active.clone() else {
             return Err("NC length without active tool".into());
         };

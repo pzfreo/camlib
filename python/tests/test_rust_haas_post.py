@@ -31,6 +31,9 @@ class RustHaasPostTest(unittest.TestCase):
         )
         source = post_job_input(job, "top", machine=machine, accept=accept, lowering=lowering)
         rust = post_job(source)
+        self.assertEqual(rust["posting"]["definition"]["machine"], plain(machine.to_dict()))
+        self.assertEqual(rust["posting"]["definition"]["post_version"], haas.HaasNGCPost.version)
+        self.assertEqual(rust["posting"]["definition"]["decoder_version"], haas.HaasNGCDecoder.version)
         self.assertEqual(rust["released"], python["released"])
         self.assertEqual(rust["findings"], plain(python["findings"]))
         if python["released"]:
@@ -57,6 +60,7 @@ class RustHaasPostTest(unittest.TestCase):
             (boring_job(dwell_s=0.4), {}, "G89 "),
             (dwell_job(canned_cycle=False), {}, "G4 P0.5"),
             (tap_job(tapping), dict(rigid_tapping=True), "G84 "),
+            (tap_job(lambda tap: tapping(tap, hand="left")), dict(rigid_tapping=True), "G74 "),
             (contour_job(compensation="wear"), dict(cutter_compensation=True), "G1 G41 "),
             (boring_job(spindle_stop=True), {}, "M5"),
         ]
@@ -101,6 +105,24 @@ class RustHaasPostTest(unittest.TestCase):
         rust = self.assert_job(j, replace(m, crash_model=declared), accept=())
         self.assertEqual(rust["machine"]["status"], "clear")
         self.assertEqual(rust["machine"]["decoded_motions"], rust["motions"])
+
+    def test_existing_frozen_haas_pocket(self):
+        import camlib
+        from support.pocket import cadquery_job
+
+        config = cadquery_job()
+        operation = replace(config["operations"][0], radial_allowance_mm=0.01)
+        setup = camlib.Setup(
+            "top",
+            stock=config["stock"],
+            tools=config["tools"],
+            operations=(camlib.OperationNode(operation, sources=()),),
+            initial_position_mm=config["initial_position_mm"],
+        )
+        job = camlib.Job("haas-pocket", config["revision"], (setup,))
+        result = self.assert_job(job, machine_for(job), lowering=LoweringOptions())
+        self.assertTrue(result["released"])
+        self.assertGreater(result["motions"], 300)
 
     def test_existing_haas_programs_and_golden(self):
         from test_haas_ngc_post import HaasNGCTest

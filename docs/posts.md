@@ -317,7 +317,7 @@ The machine and its dialect cross as JSON: `Machine.to_dict()`, the same form
 a posted run records as its `definition["machine"]`, with the #116
 `crash_model` inside. Every field is required, except the optional settings
 `to_dict()` leaves out when unset (`max_normal_accel_mm_s2`,
-`max_axis_feed_mm_min`, `motion_policy`, `schedule_post_feeds`, `crash_model`).
+`max_axis_feed_mm_min`, `motion_policy`, `schedule_post_feeds`, `crash_model`, `controller`).
 A JSON machine is checked with the Python rules and messages.
 
 | Entry point | What it does |
@@ -353,7 +353,9 @@ The first named pair is `"name": "haas_ngc"`: the 2020 reference in
 `examples/haas_ngc_post.py`'s `ReferenceMachine.to_dict()` packs its additional
 fields into this object, including Setting 22/52, program number, curve policy,
 rotation/scaling, tapping and compensation options. All are explicit in JSON;
-there are no inferred machine values. The base machine and `crash_model` stay
+there are no inferred machine values. Complete synthetic inputs are in
+[`fixtures/posts/rust/haas-drill.json`](../fixtures/posts/rust/haas-drill.json)
+and [`haas-program.json`](../fixtures/posts/rust/haas-program.json). The base machine and `crash_model` stay
 in their existing locations. Rust validates the same reference premises.
 
 The name selects controller formatter hooks and an independent actual-word

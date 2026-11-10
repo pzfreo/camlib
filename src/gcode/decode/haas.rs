@@ -124,7 +124,7 @@ impl Decoder {
             && pieces.iter().filter(|p| p.0 == 'G').count() == 2
             && pieces.len() >= 2
             && pieces[0].0 == 'G'
-            && pieces[0].2 == 1.
+            && pieces[0].1 == "1"
             && pieces[1].0 == 'G'
             && [40., 41., 42.].contains(&pieces[1].2)
         {
